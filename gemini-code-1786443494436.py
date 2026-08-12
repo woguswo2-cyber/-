@@ -153,14 +153,39 @@ if st.session_state.bl_list:
         m_col, i_col = st.columns([2.5, 1])
 
         with m_col:
-            st.subheader(f"📍 {target_data['vessel_name']} 실시간 해상 위치")
+            st.subheader("📍 전체 수입 B/L 실시간 해상 위치")
             
-            # Folium 지도 생성
+            # 지도 중심: 선택한 배 위치 기준
             m = folium.Map(
                 location=[target_data["lat"], target_data["lon"]],
-                zoom_start=7,
+                zoom_start=6,
                 tiles="OpenStreetMap"
             )
+            
+            # 💡 등록된 모든 B/L을 지도에 마커로 표시
+            for item in st.session_state.bl_list:
+                # 선택된 B/L은 '빨간색', 나머지는 '파란색' 마커로 구분
+                is_selected = (item["bl_no"] == selected_bl_no)
+                marker_color = "red" if is_selected else "blue"
+                
+                popup_html = f"""
+                <div style="font-family: sans-serif; width: 180px;">
+                    <h4>{item['vessel_name']}</h4>
+                    <b>B/L:</b> {item['bl_no']}<br>
+                    <b>품목:</b> {item['item_name']}<br>
+                    <b>ETA:</b> {item['eta']}<br>
+                    <b>속도:</b> {item['speed']} kts
+                </div>
+                """
+                
+                folium.Marker(
+                    location=[item["lat"], item["lon"]],
+                    popup=folium.Popup(popup_html, max_width=250),
+                    tooltip=f"{'🔴 [선택됨] ' if is_selected else '🔵 '}{item['vessel_name']} ({item['bl_no']})",
+                    icon=folium.Icon(color=marker_color, icon="ship", prefix="fa")
+                ).add_to(m)
+
+            st_folium(m, width="100%", height=500)
             
             # 마커 추가
             popup_html = f"""
