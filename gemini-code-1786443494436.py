@@ -12,7 +12,34 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 1. 세션 상태(Session State) 초기화 - 사용자 등록 B/L 목록 저장소
+# 1. VesselFinder API 실시간 좌표 호출 함수
+# -----------------------------------------------------------------------------
+def get_vesselfinder_position(imo_number, api_key):
+    """VesselFinder API를 호출하여 선박의 실시간 위도/경도/속도 수신"""
+    if not api_key or not imo_number:
+        return None
+        
+    url = f"https://api.vesselfinder.com/vessels?userkey={api_key.strip()}&imo={imo_number.strip()}"
+    
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0:
+                vessel = data[0]
+                return {
+                    "lat": float(vessel.get("LATITUDE", 0)),
+                    "lon": float(vessel.get("LONGITUDE", 0)),
+                    "speed": float(vessel.get("SPEED", 0)),
+                    "status": "📡 실시간 위성 추적 중"
+                }
+    except Exception as e:
+        st.sidebar.error(f"API 호출 오류: {e}")
+        
+    return None
+
+# -----------------------------------------------------------------------------
+# 2. 세션 상태(Session State) 초기화 - 사용자 등록 B/L 목록 저장소
 # -----------------------------------------------------------------------------
 if "bl_list" not in st.session_state:
     st.session_state.bl_list = [
@@ -26,7 +53,7 @@ if "bl_list" not in st.session_state:
             "lon": 128.95,
             "speed": 13.5,
             "destination": "Busan, KR",
-            "status": "항해 중 (Underway)"
+            "status": "운항 중"
         },
         {
             "bl_no": "MSC12345678",
@@ -38,39 +65,32 @@ if "bl_list" not in st.session_state:
             "lon": 121.47,
             "speed": 14.2,
             "destination": "Busan, KR",
-            "status": "항해 중 (Underway)"
-        },
-        {
-            "bl_no": "SH26E0507017",
-            "vessel_name": "ONE INFINITY / 009E",
-            "imo": "9988776",
-            "item_name": "부품 원자재",
-            "eta": "2026-08-12",
-            "lat": 35.10,
-            "lon": 129.04,
-            "speed": 11.0,
-            "destination": "Busan, KR",
             "status": "운항 중"
         }
     ]
 
 # -----------------------------------------------------------------------------
-# 2. 메인 UI 구성
+# 3. 메인 UI 및 사이드바 구성
 # -----------------------------------------------------------------------------
 st.title("🚢 수입 B/L 화물 실시간 위치 추적 시스템")
 st.caption("목록에서 원하는 B/L 행을 클릭하면 해당 선박의 위치로 지도가 즉시 이동합니다.")
 
-# 사이드바: 신규 B/L 등록 폼
+# 사이드바: API Key 설정 & 신규 B/L 등록
+st.sidebar.header("🔑 VesselFinder API 설정")
+vesselfinder_key = st.sidebar.text_input("VesselFinder API Key", type="password", help="API 키를 입력하면 IMO 번호 기반 실시간 위치로 자동 전환됩니다.")
+
+st.sidebar.markdown("---")
 st.sidebar.header("➕ 신규 수입 B/L 등록")
+
 with st.sidebar.form("add_bl_form", clear_on_submit=True):
     new_bl = st.text_input("B/L 번호 *", placeholder="예: GDY0419405")
     new_vessel = st.text_input("선박명 (Vessel Name) *", placeholder="예: HYUNDAI DRIVE")
-    new_imo = st.text_input("IMO 번호 (선택)", placeholder="예: 9632783")
+    new_imo = st.text_input("IMO 번호 (7자리 숫자) *", placeholder="예: 9632783")
     new_item = st.text_input("수입 품목 / 비고", placeholder="예: 블로워 모터 / 샤프트")
     new_eta = st.date_input("도착 예정일 (ETA)")
     
     st.markdown("---")
-    st.caption("📍 초기 위치 설정 (위도/경도)")
+    st.caption("📍 수동 위치 설정 (API Key 미사용 시 예비 좌표)")
     new_lat = st.number_input("위도 (Latitude)", value=34.8000, format="%.4f")
     new_lon = st.number_input("경도 (Longitude)", value=128.9500, format="%.4f")
     
@@ -100,17 +120,26 @@ with st.sidebar.form("add_bl_form", clear_on_submit=True):
             st.sidebar.error("B/L 번호와 선박명은 필수 입력입니다.")
 
 # -----------------------------------------------------------------------------
-# 3. 메인 화면: 클릭 선택형 B/L 목록 표 & 실시간 지도
+# 4. 메인 화면: B/L 표 & 실시간 지도 표출
 # -----------------------------------------------------------------------------
 if st.session_state.bl_list:
+    # API Key가 등록되어 있으면 실시간 좌표 가져오기 시도
+    if vesselfinder_key:
+        for item in st.session_state.bl_list:
+            if item.get("imo"):
+                live_pos = get_vesselfinder_position(item["imo"], vesselfinder_key)
+                if live_pos:
+                    item["lat"] = live_pos["lat"]
+                    item["lon"] = live_pos["lon"]
+                    item["speed"] = live_pos["speed"]
+                    item["status"] = live_pos["status"]
+
     st.subheader("📋 관리 중인 수입 B/L 목록 (행을 클릭하여 위치 이동)")
     
-    # 데이터프레임 생성
     df_bl = pd.DataFrame(st.session_state.bl_list)
-    display_df = df_bl[["bl_no", "vessel_name", "item_name", "eta", "status"]].copy()
-    display_df.columns = ["B/L 번호", "선박명", "수입 품목", "ETA (도착예정)", "현재 상태"]
+    display_df = df_bl[["bl_no", "vessel_name", "imo", "item_name", "eta", "status"]].copy()
+    display_df.columns = ["B/L 번호", "선박명", "IMO 번호", "수입 품목", "ETA (도착예정)", "현재 상태"]
 
-    # 💡 [핵심] 표에서 행 클릭 시 이벤트 발생 (on_select="rerun")
     event = st.dataframe(
         display_df,
         use_container_width=True,
@@ -119,14 +148,10 @@ if st.session_state.bl_list:
         key="bl_table"
     )
 
-    # 표에서 클릭한 행 감지
     selected_rows = event.selection.get("rows", [])
-    
     if selected_rows:
-        selected_idx = selected_rows[0]
-        target_data = st.session_state.bl_list[selected_idx]
+        target_data = st.session_state.bl_list[selected_rows[0]]
     else:
-        # 클릭한 게 없으면 첫 번째 B/L을 기본값으로 설정
         target_data = st.session_state.bl_list[0]
 
     selected_bl_no = target_data["bl_no"]
@@ -137,7 +162,7 @@ if st.session_state.bl_list:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("선택된 B/L", target_data["bl_no"])
     c2.metric("선박명", target_data["vessel_name"])
-    c3.metric("품목", target_data["item_name"])
+    c3.metric("IMO 번호", target_data["imo"] if target_data["imo"] else "미입력")
     c4.metric("도착 예정일 (ETA)", target_data["eta"])
 
     # 지도 및 세부 정보
@@ -146,14 +171,12 @@ if st.session_state.bl_list:
     with m_col:
         st.subheader(f"📍 전체 B/L 위치 (현재 선택: 🔴 {target_data['vessel_name']})")
         
-        # 지도 중심을 선택된 배 위치로 설정
         m = folium.Map(
             location=[target_data["lat"], target_data["lon"]],
             zoom_start=6,
             tiles="OpenStreetMap"
         )
         
-        # 등록된 모든 B/L 표시 (선택된 건은 빨간색, 나머지는 파란색)
         for item in st.session_state.bl_list:
             is_selected = (item["bl_no"] == selected_bl_no)
             marker_color = "red" if is_selected else "blue"
@@ -162,6 +185,7 @@ if st.session_state.bl_list:
             <div style="font-family: sans-serif; width: 180px;">
                 <h4>{item['vessel_name']}</h4>
                 <b>B/L:</b> {item['bl_no']}<br>
+                <b>IMO:</b> {item['imo']}<br>
                 <b>품목:</b> {item['item_name']}<br>
                 <b>ETA:</b> {item['eta']}<br>
                 <b>속도:</b> {item['speed']} kts
@@ -183,7 +207,7 @@ if st.session_state.bl_list:
         st.write(f"**현재 위도:** `{target_data['lat']}`")
         st.write(f"**현재 경도:** `{target_data['lon']}`")
         st.write(f"**운항 속력:** `{target_data['speed']} knots`")
-        st.write(f"**목적지:** {target_data['destination']}")
+        st.write(f"**추적 상태:** {target_data['status']}")
 
         st.markdown("---")
         if st.button("🗑️ 이 B/L 삭제하기", type="secondary"):
